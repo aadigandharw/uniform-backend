@@ -18,14 +18,16 @@ class UserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
-    def create_superuser(self, email, password, full_name=None):  # ✅ FIX
+    def create_superuser(self, email, password, full_name=None):
+        if not full_name:
+            full_name = email.split("@")[0]  # 🔥 AUTO NAME
+
         user = self.create_user(email, password, full_name)
         user.is_staff = True
         user.is_superuser = True
-        user.is_active = True  # ✅ superuser always active
+        user.is_active = True
         user.save()
         return user
-
 
 class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True)
