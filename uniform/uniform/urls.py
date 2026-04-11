@@ -22,5 +22,9 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('register/', views.RegisterView.as_view()),
     path('login/',views.LoginView.as_view()),
+    path('users/', views.UserListView.as_view()),
+    path('approve-user/<int:id>/', views.ApproveUserView.as_view()),
+    path('update-user/<int:id>/', views.UpdateUserView.as_view()),
+    path('me/', views.MeView.as_view()),  # 🔥 NEW
 
 ]
