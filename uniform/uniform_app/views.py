@@ -653,6 +653,21 @@ class MSOrderDetailView(APIView):
         
         print("ERRORS:", serializer.errors)
         return Response(serializer.errors, status=400)
+    
+       # ✅ YEH DELETE METHOD ADD KARO - MISSING THA
+    def delete(self, request, pk):
+        """Soft delete MS order"""
+        order = get_object_or_404(MSOrder, pk=pk)
+        order.is_active = False
+        order.save()
+        
+        # Update customer stats
+        order.update_customer_stats()
+        
+        return Response({
+            "message": "MS Order deleted successfully",
+            "order_id": order.order_id
+        }, status=status.HTTP_200_OK)
 
 class MSOrderStatsView(APIView):
     """Get MS order statistics"""
