@@ -1,9 +1,9 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from .serializers import RegisterSerializer, LoginSerializer, CustomerSerializer ,MSOrderSerializer
+from .serializers import RegisterSerializer, LoginSerializer, CustomerSerializer ,MSOrderSerializer ,MSOrderWithItemsSerializer ,MSOrderItemSerializer
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from .models import User, Customer , MSOrder
+from .models import User, Customer , MSOrder , MSOrderItem
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.shortcuts import get_object_or_404
 from django.db.models import Q, Sum
@@ -504,11 +504,13 @@ class RMOrderStatusUpdateView(APIView):
     
 # views.py - Add MSOrder views
 
+# views.py - Update MSOrderListView for multiple items
+
 class MSOrderListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Get all active MS orders with filters"""
+        """Get all active MS orders with items"""
         queryset = MSOrder.objects.filter(is_active=True)
         
         # Filter by status
@@ -525,24 +527,43 @@ class MSOrderListView(APIView):
                 Q(tailor__icontains=search)
             )
         
-        serializer = MSOrderSerializer(queryset, many=True)
+        serializer = MSOrderWithItemsSerializer(queryset, many=True)
         return Response(serializer.data)
 
     def post(self, request):
-        """Create new MS order"""
+        """Create new MS order with multiple items"""
         print("=" * 50)
         print("RECEIVED MS ORDER DATA:", request.data)
         print("=" * 50)
         
-        serializer = MSOrderSerializer(data=request.data)
+        data = request.data
+        items_data = data.pop('items', [])
         
-        if serializer.is_valid():
-            order = serializer.save(created_by=request.user)
-            print("MS ORDER CREATED:", order.order_id)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        # Create order
+        order_serializer = MSOrderSerializer(data=data)
         
-        print("SERIALIZER ERRORS:", serializer.errors)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        if order_serializer.is_valid():
+            order = order_serializer.save(created_by=request.user)
+            
+            # Create items
+            for item_data in items_data:
+                item_data['order'] = order.id
+                item_data['customer'] = data.get('customer_id')
+                item_serializer = MSOrderItemSerializer(data=item_data)
+                if item_serializer.is_valid():
+                    item_serializer.save()
+                else:
+                    print("Item errors:", item_serializer.errors)
+            
+            # Update order total amount
+            total_amount = sum(float(item.get('amount', 0)) for item in items_data)
+            order.amount = total_amount
+            order.save()
+            
+            return Response(order_serializer.data, status=status.HTTP_201_CREATED)
+        
+        print("ORDER ERRORS:", order_serializer.errors)
+        return Response(order_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 # views.py - MSOrderDetailView mein bhi same mapping karo

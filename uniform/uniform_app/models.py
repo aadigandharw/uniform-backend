@@ -438,3 +438,87 @@ class MSOrder(models.Model):
         if self.delivery_date and self.status != 'delivered':
             return self.delivery_date < timezone.now().date()
         return False
+    
+
+# models.py - Add this after MSOrder model
+
+class MSOrderItem(models.Model):
+    """
+    MS Order Item Model - Individual items in an MS order
+    Each order can have multiple items (e.g., Shirt, Pant, etc.)
+    """
+    
+    GENDER_CHOICES = [
+        ('Ladies', '👩 Ladies'),
+        ('Gents', '👨 Gents'),
+    ]
+    
+    PRODUCT_TYPE_CHOICES = [
+        ('Shirt', 'Shirt'),
+        ('Pant', 'Pant'),
+        ('Kurta', 'Kurta'),
+        ('Saree', 'Saree'),
+        ('Blouse', 'Blouse'),
+        ('Lehenga', 'Lehenga'),
+        ('Jacket', 'Jacket'),
+        ('Coat', 'Coat'),
+        ('Trouser', 'Trouser'),
+        ('Other', 'Other'),
+    ]
+    
+    # Relationships
+    order = models.ForeignKey(MSOrder, on_delete=models.CASCADE, related_name='items')
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True)
+    
+    # Item Details
+    product_type = models.CharField(max_length=50, choices=PRODUCT_TYPE_CHOICES, default='Shirt')
+    gender = models.CharField(max_length=10, choices=GENDER_CHOICES, default='Gents')
+    quantity = models.IntegerField(default=1)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    
+    # ============= COMMON MEASUREMENTS =============
+    chest = models.FloatField(null=True, blank=True)
+    waist = models.FloatField(null=True, blank=True)
+    hip = models.FloatField(null=True, blank=True)
+    shoulder = models.FloatField(null=True, blank=True)
+    length = models.FloatField(null=True, blank=True)
+    sleeve_length = models.FloatField(null=True, blank=True)
+    armhole = models.FloatField(null=True, blank=True)
+    neck = models.FloatField(null=True, blank=True)
+    
+    # ============= GENTS ONLY =============
+    collar = models.FloatField(null=True, blank=True)
+    bicep = models.FloatField(null=True, blank=True)
+    elbow = models.FloatField(null=True, blank=True)
+    cuff = models.FloatField(null=True, blank=True)
+    thigh = models.FloatField(null=True, blank=True)
+    knee = models.FloatField(null=True, blank=True)
+    bottom = models.FloatField(null=True, blank=True)
+    rise = models.FloatField(null=True, blank=True)
+    inseam = models.FloatField(null=True, blank=True)
+    
+    # ============= LADIES ONLY =============
+    bust = models.FloatField(null=True, blank=True)
+    under_bust = models.FloatField(null=True, blank=True)
+    waist_hip = models.FloatField(null=True, blank=True)
+    shoulder_to_waist = models.FloatField(null=True, blank=True)
+    waist_to_knee = models.FloatField(null=True, blank=True)
+    waist_to_floor = models.FloatField(null=True, blank=True)
+    arm_length = models.FloatField(null=True, blank=True)
+    wrist = models.FloatField(null=True, blank=True)
+    front_neck_depth = models.FloatField(null=True, blank=True)
+    back_neck_depth = models.FloatField(null=True, blank=True)
+    dart_length = models.FloatField(null=True, blank=True)
+    dart_depth = models.FloatField(null=True, blank=True)
+    
+    # Additional
+    special_notes = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'ms_order_items'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.product_type} - {self.gender} (x{self.quantity})"

@@ -1,7 +1,8 @@
 # serializers.py - Top pe import add karo
 
 from rest_framework import serializers
-from .models import User, Customer, RMOrder , MSOrder # ✅ RMOrder import karo
+
+from .models import User, Customer, RMOrder , MSOrder , MSOrderItem# ✅ RMOrder import karo
 
 # Rest of your serializers...
 class RegisterSerializer(serializers.ModelSerializer):
@@ -261,3 +262,22 @@ class MSOrderSerializer(serializers.ModelSerializer):
         
         instance.save()
         return instance
+    
+# serializers.py - Add MSOrderItemSerializer
+
+class MSOrderItemSerializer(serializers.ModelSerializer):
+    """Serializer for MS Order Items"""
+    
+    class Meta:
+        model = MSOrderItem
+        fields = '__all__'
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class MSOrderWithItemsSerializer(serializers.ModelSerializer):
+    """MS Order Serializer with items"""
+    items = MSOrderItemSerializer(many=True, read_only=True)
+    
+    class Meta:
+        model = MSOrder
+        fields = '__all__'
