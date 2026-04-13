@@ -1,9 +1,10 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from .serializers import RegisterSerializer, LoginSerializer, CustomerSerializer ,MSOrderSerializer ,MSOrderWithItemsSerializer ,MSOrderItemSerializer
+from .serializers import RegisterSerializer, LoginSerializer, CustomerSerializer ,MSOrderSerializer 
+from .serializers import MSOrderWithItemsSerializer ,MSOrderItemSerializer , RMOrderItemSerializer ,RMOrderWithItemsSerializer
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from .models import User, Customer , MSOrder , MSOrderItem
+from .models import User, Customer , MSOrder , MSOrderItem , RMOrderItem
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.shortcuts import get_object_or_404
 from django.db.models import Q, Sum
@@ -270,11 +271,13 @@ from .serializers import RMOrderSerializer
 # views.py - Fix RMOrderListView POST method
 # views.py - Complete RMOrderListView
 
+# views.py - Update RMOrderListView for multiple items
+
 class RMOrderListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Get all active RM orders with filters"""
+        """Get all active RM orders with items"""
         queryset = RMOrder.objects.filter(is_active=True)
         
         # Filter by status
@@ -291,55 +294,69 @@ class RMOrderListView(APIView):
                 Q(category__icontains=search)
             )
         
-        serializer = RMOrderSerializer(queryset, many=True)
+        serializer = RMOrderWithItemsSerializer(queryset, many=True)
         return Response(serializer.data)
 
+    # views.py - RMOrderListView POST method mein change
+
     def post(self, request):
-        """Create new RM order"""
-        print("=" * 50)
-        print("RECEIVED DATA:", request.data)
-        print("=" * 50)
-        
-        # Extract data from request
+        """Create new RM order with multiple items"""
         data = request.data
+        items_data = data.pop('items', [])
         
-        # Prepare data for serializer
-        serializer_data = {
+        order_data = {
             'customer_id': data.get('customer_id'),
             'category': data.get('category'),
             'order_date': data.get('order_date'),
             'delivery_date': data.get('delivery_date'),
             'ordered_by': data.get('ordered_by'),
-            'amount': data.get('amount'),
-            'quantity': data.get('quantity', 0),
+            'amount': sum(float(item.get('amount', 0)) for item in items_data),
+            'quantity': sum(int(item.get('quantity', 0)) for item in items_data),
             'status': data.get('status', 'pending')
         }
         
-        print("PREPARED DATA:", serializer_data)
+        order_serializer = RMOrderSerializer(data=order_data)
         
-        serializer = RMOrderSerializer(data=serializer_data)
+        if order_serializer.is_valid():
+            order = order_serializer.save(created_by=request.user)
+            
+            # Create items
+            for item_data in items_data:
+                quantity = item_data.get('quantity', 1)
+                amount_per_piece = item_data.get('amount_per_piece', item_data.get('amount', 0) / quantity if quantity > 0 else 0)
+                
+                RMOrderItem.objects.create(
+                    order=order,
+                    customer_id=order.customer.id,
+                    uniform_item=item_data.get('uniform_item', 'Shirt'),
+                    color=item_data.get('color', 'White'),
+                    size=item_data.get('size', 'M'),
+                    quantity=quantity,
+                    amount_per_piece=amount_per_piece,
+                    amount=item_data.get('amount', quantity * amount_per_piece),
+                    special_notes=item_data.get('special_notes', '')
+                )
+            
+            # ✅ Return with items
+            response_serializer = RMOrderWithItemsSerializer(order)
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
         
-        if serializer.is_valid():
-            order = serializer.save(created_by=request.user)
-            print("ORDER CREATED:", order.order_id)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        
-        print("SERIALIZER ERRORS:", serializer.errors)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-# views.py - RMOrderDetailView ko aise change karo
+        return Response(order_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+# views.py - Change RMOrderDetailView GET method
 
 class RMOrderDetailView(APIView):
     """GET, PUT, PATCH, DELETE single RM order"""
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
+        """Get single RM order WITH items"""
         order = get_object_or_404(RMOrder, pk=pk, is_active=True)
-        serializer = RMOrderSerializer(order)
+        # ✅ CHANGE THIS - Use RMOrderWithItemsSerializer
+        serializer = RMOrderWithItemsSerializer(order)  # ← YEH IMPORTANT HAI!
         return Response(serializer.data)
 
     def put(self, request, pk):
-        """Full update of RM order - Map frontend fields to backend fields"""
+        """Full update of RM order with items"""
         order = get_object_or_404(RMOrder, pk=pk)
         
         print("=" * 50)
@@ -347,8 +364,9 @@ class RMOrderDetailView(APIView):
         print("=" * 50)
         
         data = request.data
+        items_data = data.pop('items', [])  # ✅ Get items array
         
-        # 🔥 Map frontend field names to backend field names
+        # Map frontend field names to backend field names
         serializer_data = {
             'customer_id': data.get('customer_id', order.customer.id if order.customer else None),
             'category': data.get('cat', data.get('category', order.category)),
@@ -365,15 +383,35 @@ class RMOrderDetailView(APIView):
         serializer = RMOrderSerializer(order, data=serializer_data)
         
         if serializer.is_valid():
-            serializer.save()
-            print("ORDER UPDATED SUCCESSFULLY")
-            return Response(serializer.data)
+            updated_order = serializer.save()
+            
+            # ✅ Handle items update if provided
+            if items_data and len(items_data) > 0:
+                # Delete old items
+                RMOrderItem.objects.filter(order=order).delete()
+                # Create new items
+                for item_data in items_data:
+                    RMOrderItem.objects.create(
+                        order=order,
+                        customer_id=order.customer.id,
+                        uniform_item=item_data.get('uniform_item', 'Shirt'),
+                        color=item_data.get('color', 'White'),
+                        size=item_data.get('size', 'M'),
+                        quantity=item_data.get('quantity', 1),
+                        amount_per_piece=item_data.get('amount_per_piece', item_data.get('amount', 0) / item_data.get('quantity', 1) if item_data.get('quantity', 1) > 0 else 0),
+                        amount=item_data.get('amount', item_data.get('quantity', 1) * item_data.get('amount_per_piece', 0)),
+                        special_notes=item_data.get('special_notes', '')
+                    )
+            
+            # ✅ Return with items using RMOrderWithItemsSerializer
+            response_serializer = RMOrderWithItemsSerializer(updated_order)
+            return Response(response_serializer.data)
         
         print("SERIALIZER ERRORS:", serializer.errors)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def patch(self, request, pk):
-        """Partial update of RM order - Map frontend fields to backend fields"""
+        """Partial update of RM order"""
         order = get_object_or_404(RMOrder, pk=pk)
         
         print("=" * 50)
@@ -383,7 +421,7 @@ class RMOrderDetailView(APIView):
         data = request.data
         serializer_data = {}
         
-        # 🔥 Map frontend field names to backend field names
+        # Map frontend field names to backend field names
         if 'customer_id' in data:
             serializer_data['customer_id'] = data['customer_id']
         elif 'cust' in data and order.customer:
@@ -434,9 +472,10 @@ class RMOrderDetailView(APIView):
         serializer = RMOrderSerializer(order, data=serializer_data, partial=True)
         
         if serializer.is_valid():
-            serializer.save()
-            print("ORDER UPDATED SUCCESSFULLY")
-            return Response(serializer.data)
+            updated_order = serializer.save()
+            # ✅ Return with items
+            response_serializer = RMOrderWithItemsSerializer(updated_order)
+            return Response(response_serializer.data)
         
         print("SERIALIZER ERRORS:", serializer.errors)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -505,12 +544,13 @@ class RMOrderStatusUpdateView(APIView):
 # views.py - Add MSOrder views
 
 # views.py - Update MSOrderListView for multiple items
+# views.py - MSOrderListView POST method (Remove product_type)
 
 class MSOrderListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Get all active MS orders with items"""
+        """Get all active MS orders WITH items"""
         queryset = MSOrder.objects.filter(is_active=True)
         
         # Filter by status
@@ -527,11 +567,14 @@ class MSOrderListView(APIView):
                 Q(tailor__icontains=search)
             )
         
+        # ✅ USE MSOrderWithItemsSerializer
         serializer = MSOrderWithItemsSerializer(queryset, many=True)
+        
+        # ✅ YEH LINE ADD KARO - RETURN MISSING THA!
         return Response(serializer.data)
 
     def post(self, request):
-        """Create new MS order with multiple items"""
+        """Create new MS order with multiple items (PERSON-BASED)"""
         print("=" * 50)
         print("RECEIVED MS ORDER DATA:", request.data)
         print("=" * 50)
@@ -539,48 +582,98 @@ class MSOrderListView(APIView):
         data = request.data
         items_data = data.pop('items', [])
         
-        # Create order
-        order_serializer = MSOrderSerializer(data=data)
+        # Prepare order data
+        order_data = {
+            'customer_id': data.get('customer_id'),
+            'gender': data.get('gender', 'Gents'),
+            'category': data.get('category', 'School'),
+            'order_date': data.get('order_date'),
+            'delivery_date': data.get('delivery_date'),
+            'ordered_by': data.get('ordered_by', ''),
+            'tailor': data.get('tailor', ''),
+            'amount': sum(float(item.get('amount', 0)) for item in items_data),
+            'quantity': sum(int(item.get('quantity', 0)) for item in items_data),
+            'status': data.get('status', 'pending')
+        }
+        
+        order_serializer = MSOrderSerializer(data=order_data)
         
         if order_serializer.is_valid():
             order = order_serializer.save(created_by=request.user)
             
-            # Create items
+            # Create items - NO product_type
             for item_data in items_data:
-                item_data['order'] = order.id
-                item_data['customer'] = data.get('customer_id')
-                item_serializer = MSOrderItemSerializer(data=item_data)
-                if item_serializer.is_valid():
-                    item_serializer.save()
-                else:
-                    print("Item errors:", item_serializer.errors)
+                MSOrderItem.objects.create(
+                    order=order,
+                    customer_id=order.customer.id,
+                    person_name=item_data.get('person_name', ''),
+                    gender=item_data.get('gender', 'Gents'),
+                    quantity=item_data.get('quantity', 1),
+                    amount=item_data.get('amount', 0),
+                    # Upper Body
+                    chest=item_data.get('chest'),
+                    shoulder=item_data.get('shoulder'),
+                    sleeve_length=item_data.get('sleeve_length'),
+                    armhole=item_data.get('armhole'),
+                    neck=item_data.get('neck'),
+                    length=item_data.get('length'),
+                    collar=item_data.get('collar'),
+                    bicep=item_data.get('bicep'),
+                    elbow=item_data.get('elbow'),
+                    cuff=item_data.get('cuff'),
+                    bust=item_data.get('bust'),
+                    under_bust=item_data.get('under_bust'),
+                    arm_length=item_data.get('arm_length'),
+                    wrist=item_data.get('wrist'),
+                    front_neck_depth=item_data.get('front_neck_depth'),
+                    back_neck_depth=item_data.get('back_neck_depth'),
+                    dart_length=item_data.get('dart_length'),
+                    dart_depth=item_data.get('dart_depth'),
+                    # Lower Body
+                    waist=item_data.get('waist'),
+                    hip=item_data.get('hip'),
+                    thigh=item_data.get('thigh'),
+                    knee=item_data.get('knee'),
+                    bottom=item_data.get('bottom'),
+                    rise=item_data.get('rise'),
+                    inseam=item_data.get('inseam'),
+                    waist_hip=item_data.get('waist_hip'),
+                    shoulder_to_waist=item_data.get('shoulder_to_waist'),
+                    waist_to_knee=item_data.get('waist_to_knee'),
+                    waist_to_floor=item_data.get('waist_to_floor'),
+                    special_notes=item_data.get('special_notes', '')
+                )
             
-            # Update order total amount
-            total_amount = sum(float(item.get('amount', 0)) for item in items_data)
-            order.amount = total_amount
-            order.save()
-            
-            return Response(order_serializer.data, status=status.HTTP_201_CREATED)
+            # Return with items using MSOrderWithItemsSerializer
+            response_serializer = MSOrderWithItemsSerializer(order)
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
         
         print("ORDER ERRORS:", order_serializer.errors)
         return Response(order_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
 # views.py - MSOrderDetailView mein bhi same mapping karo
+
+# views.py - Fix MSOrderDetailView to return items
 
 class MSOrderDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
+        """Get single MS order WITH items"""
         order = get_object_or_404(MSOrder, pk=pk, is_active=True)
-        serializer = MSOrderSerializer(order)
+        # ✅ CHANGE THIS - Use MSOrderWithItemsSerializer instead of MSOrderSerializer
+        serializer = MSOrderWithItemsSerializer(order)  # ← YEH IMPORTANT HAI!
         return Response(serializer.data)
+
+    # views.py - MSOrderDetailView PUT method (Remove product_type)
 
     def put(self, request, pk):
         """Full update - Map frontend fields to backend fields"""
         order = get_object_or_404(MSOrder, pk=pk)
         
         data = request.data
+        
+        # Check if we're updating with items array
+        items_data = data.pop('items', None)
         
         serializer_data = {
             'customer_id': data.get('customer_id', order.customer.id if order.customer else None),
@@ -593,22 +686,63 @@ class MSOrderDetailView(APIView):
             'amount': data.get('amt', data.get('amount', float(order.amount))),
             'quantity': data.get('qty', data.get('quantity', order.quantity)),
             'status': data.get('status', order.status),
-            # Measurements
-            'chest': data.get('chest', order.chest),
-            'waist': data.get('waist', order.waist),
-            'hip': data.get('hip', order.hip),
-            'shoulder': data.get('shoulder', order.shoulder),
-            'length': data.get('length', order.length),
-            'sleeve_length': data.get('sleeve_length', order.sleeve_length),
-            'armhole': data.get('armhole', order.armhole),
-            'neck': data.get('neck', order.neck),
         }
         
         serializer = MSOrderSerializer(order, data=serializer_data)
         
         if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
+            updated_order = serializer.save()
+            
+            # Handle items update if provided
+            if items_data and len(items_data) > 0:
+                # Delete old items
+                MSOrderItem.objects.filter(order=order).delete()
+                # Create new items - NO product_type
+                for item_data in items_data:
+                    MSOrderItem.objects.create(
+                        order=order,
+                        customer_id=order.customer.id,
+                        person_name=item_data.get('person_name', ''),
+                        gender=item_data.get('gender', 'Gents'),
+                        quantity=item_data.get('quantity', 1),
+                        amount=item_data.get('amount', 0),
+                        # Upper Body
+                        chest=item_data.get('chest'),
+                        shoulder=item_data.get('shoulder'),
+                        sleeve_length=item_data.get('sleeve_length'),
+                        armhole=item_data.get('armhole'),
+                        neck=item_data.get('neck'),
+                        length=item_data.get('length'),
+                        collar=item_data.get('collar'),
+                        bicep=item_data.get('bicep'),
+                        elbow=item_data.get('elbow'),
+                        cuff=item_data.get('cuff'),
+                        bust=item_data.get('bust'),
+                        under_bust=item_data.get('under_bust'),
+                        arm_length=item_data.get('arm_length'),
+                        wrist=item_data.get('wrist'),
+                        front_neck_depth=item_data.get('front_neck_depth'),
+                        back_neck_depth=item_data.get('back_neck_depth'),
+                        dart_length=item_data.get('dart_length'),
+                        dart_depth=item_data.get('dart_depth'),
+                        # Lower Body
+                        waist=item_data.get('waist'),
+                        hip=item_data.get('hip'),
+                        thigh=item_data.get('thigh'),
+                        knee=item_data.get('knee'),
+                        bottom=item_data.get('bottom'),
+                        rise=item_data.get('rise'),
+                        inseam=item_data.get('inseam'),
+                        waist_hip=item_data.get('waist_hip'),
+                        shoulder_to_waist=item_data.get('shoulder_to_waist'),
+                        waist_to_knee=item_data.get('waist_to_knee'),
+                        waist_to_floor=item_data.get('waist_to_floor'),
+                        special_notes=item_data.get('special_notes', '')
+                    )
+            
+            # Return with items using MSOrderWithItemsSerializer
+            response_serializer = MSOrderWithItemsSerializer(updated_order)
+            return Response(response_serializer.data)
         
         print("ERRORS:", serializer.errors)
         return Response(serializer.errors, status=400)
@@ -648,13 +782,13 @@ class MSOrderDetailView(APIView):
         serializer = MSOrderSerializer(order, data=serializer_data, partial=True)
         
         if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
+            updated_order = serializer.save()
+            response_serializer = MSOrderWithItemsSerializer(updated_order)
+            return Response(response_serializer.data)
         
         print("ERRORS:", serializer.errors)
         return Response(serializer.errors, status=400)
     
-       # ✅ YEH DELETE METHOD ADD KARO - MISSING THA
     def delete(self, request, pk):
         """Soft delete MS order"""
         order = get_object_or_404(MSOrder, pk=pk)
@@ -662,13 +796,13 @@ class MSOrderDetailView(APIView):
         order.save()
         
         # Update customer stats
-        order.update_customer_stats()
+        if order.customer:
+            order.customer.update_totals()
         
         return Response({
             "message": "MS Order deleted successfully",
             "order_id": order.order_id
         }, status=status.HTTP_200_OK)
-
 class MSOrderStatsView(APIView):
     """Get MS order statistics"""
     permission_classes = [IsAuthenticated]

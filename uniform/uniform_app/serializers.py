@@ -2,7 +2,7 @@
 
 from rest_framework import serializers
 
-from .models import User, Customer, RMOrder , MSOrder , MSOrderItem# ✅ RMOrder import karo
+from .models import User, Customer, RMOrder , MSOrder , MSOrderItem , RMOrderItem# ✅ RMOrder import karo
 
 # Rest of your serializers...
 class RegisterSerializer(serializers.ModelSerializer):
@@ -265,8 +265,10 @@ class MSOrderSerializer(serializers.ModelSerializer):
     
 # serializers.py - Add MSOrderItemSerializer
 
+# serializers.py - Update MSOrderItemSerializer
+
 class MSOrderItemSerializer(serializers.ModelSerializer):
-    """Serializer for MS Order Items"""
+    """Serializer for MS Order Items - Each item is a PERSON"""
     
     class Meta:
         model = MSOrderItem
@@ -280,4 +282,23 @@ class MSOrderWithItemsSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = MSOrder
+        fields = '__all__'
+
+# serializers.py - Add after MSOrderItemSerializer
+
+class RMOrderItemSerializer(serializers.ModelSerializer):
+    """Serializer for RM Order Items"""
+    
+    class Meta:
+        model = RMOrderItem
+        fields = '__all__'
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class RMOrderWithItemsSerializer(serializers.ModelSerializer):
+    """RM Order Serializer with items"""
+    items = RMOrderItemSerializer(many=True, read_only=True)
+    
+    class Meta:
+        model = RMOrder
         fields = '__all__'
