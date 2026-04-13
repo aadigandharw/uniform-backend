@@ -1,9 +1,10 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from .serializers import RegisterSerializer, LoginSerializer, CustomerSerializer ,MSOrderSerializer ,MSOrderWithItemsSerializer ,MSOrderItemSerializer
+from .serializers import RegisterSerializer, LoginSerializer, CustomerSerializer ,MSOrderSerializer 
+from .serializers import MSOrderWithItemsSerializer ,MSOrderItemSerializer , RMOrderItemSerializer ,RMOrderWithItemsSerializer
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from .models import User, Customer , MSOrder , MSOrderItem
+from .models import User, Customer , MSOrder , MSOrderItem , RMOrderItem
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.shortcuts import get_object_or_404
 from django.db.models import Q, Sum
@@ -270,11 +271,13 @@ from .serializers import RMOrderSerializer
 # views.py - Fix RMOrderListView POST method
 # views.py - Complete RMOrderListView
 
+# views.py - Update RMOrderListView for multiple items
+
 class RMOrderListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Get all active RM orders with filters"""
+        """Get all active RM orders with items"""
         queryset = RMOrder.objects.filter(is_active=True)
         
         # Filter by status
@@ -291,43 +294,49 @@ class RMOrderListView(APIView):
                 Q(category__icontains=search)
             )
         
-        serializer = RMOrderSerializer(queryset, many=True)
+        serializer = RMOrderWithItemsSerializer(queryset, many=True)
         return Response(serializer.data)
 
     def post(self, request):
-        """Create new RM order"""
+        """Create new RM order with multiple items"""
         print("=" * 50)
-        print("RECEIVED DATA:", request.data)
+        print("RECEIVED RM ORDER DATA:", request.data)
         print("=" * 50)
         
-        # Extract data from request
         data = request.data
+        items_data = data.pop('items', [])
         
-        # Prepare data for serializer
-        serializer_data = {
+        # Prepare order data
+        order_data = {
             'customer_id': data.get('customer_id'),
             'category': data.get('category'),
             'order_date': data.get('order_date'),
             'delivery_date': data.get('delivery_date'),
             'ordered_by': data.get('ordered_by'),
-            'amount': data.get('amount'),
-            'quantity': data.get('quantity', 0),
+            'amount': sum(float(item.get('amount', 0)) for item in items_data),
+            'quantity': sum(int(item.get('quantity', 0)) for item in items_data),
             'status': data.get('status', 'pending')
         }
         
-        print("PREPARED DATA:", serializer_data)
+        order_serializer = RMOrderSerializer(data=order_data)
         
-        serializer = RMOrderSerializer(data=serializer_data)
+        if order_serializer.is_valid():
+            order = order_serializer.save(created_by=request.user)
+            
+            # Create items
+            for item_data in items_data:
+                item_data['order'] = order.id
+                item_data['customer'] = data.get('customer_id')
+                item_serializer = RMOrderItemSerializer(data=item_data)
+                if item_serializer.is_valid():
+                    item_serializer.save()
+                else:
+                    print("Item errors:", item_serializer.errors)
+            
+            return Response(order_serializer.data, status=status.HTTP_201_CREATED)
         
-        if serializer.is_valid():
-            order = serializer.save(created_by=request.user)
-            print("ORDER CREATED:", order.order_id)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        
-        print("SERIALIZER ERRORS:", serializer.errors)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-# views.py - RMOrderDetailView ko aise change karo
+        print("ORDER ERRORS:", order_serializer.errors)
+        return Response(order_serializer.errors, status=status.HTTP_400_BAD_REQUEST)# views.py - RMOrderDetailView ko aise change karo
 
 class RMOrderDetailView(APIView):
     """GET, PUT, PATCH, DELETE single RM order"""

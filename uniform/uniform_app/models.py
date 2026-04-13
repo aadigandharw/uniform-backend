@@ -243,6 +243,55 @@ class RMOrder(models.Model):
     def delivery_date_display(self):
         """Return delivery date in DD/MM/YYYY format"""
         return self.delivery_date.strftime('%d/%m/%Y') if self.delivery_date else '-'
+
+
+
+    # models.py - Add this after RMOrder model
+
+class RMOrderItem(models.Model):
+    """
+    RM Order Item Model - Individual items in an RM order
+    Each order can have multiple items with different sizes and quantities
+    """
+    
+    SIZE_CHOICES = [
+        ('XS', 'Extra Small'),
+        ('S', 'Small'),
+        ('M', 'Medium'),
+        ('L', 'Large'),
+        ('XL', 'Extra Large'),
+        ('XXL', 'XX Large'),
+        ('XXXL', 'XXX Large'),
+        ('Custom', 'Custom Size'),
+    ]
+    
+    # Relationships
+    order = models.ForeignKey(RMOrder, on_delete=models.CASCADE, related_name='items')
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True)
+    
+    # Item Details
+    product_type = models.CharField(max_length=100, default='Uniform', verbose_name="Product Type")
+    uniform_item = models.CharField(max_length=100, default='Shirt', verbose_name="Uniform Item")
+    color = models.CharField(max_length=50, blank=True, null=True, verbose_name="Color")
+    size = models.CharField(max_length=20, choices=SIZE_CHOICES, default='M', verbose_name="Size")
+    quantity = models.IntegerField(default=1, verbose_name="Quantity")
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Amount (₹)")
+    
+    # Stock tracking
+    stock_available = models.BooleanField(default=True, verbose_name="Stock Available")
+    stock_check_note = models.CharField(max_length=255, blank=True, null=True, verbose_name="Stock Check Note")
+    
+    # Additional
+    special_notes = models.TextField(blank=True, null=True, verbose_name="Special Instructions")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'rm_order_items'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.uniform_item} ({self.size}) x{self.quantity} - ₹{self.amount}"
     
 
 # models.py - Add this after RMOrder model
