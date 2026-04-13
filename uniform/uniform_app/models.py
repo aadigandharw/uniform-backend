@@ -248,6 +248,8 @@ class RMOrder(models.Model):
 
     # models.py - Add this after RMOrder model
 
+# models.py - RMOrderItem model (Find this and update)
+
 class RMOrderItem(models.Model):
     """
     RM Order Item Model - Individual items in an RM order
@@ -275,7 +277,11 @@ class RMOrderItem(models.Model):
     color = models.CharField(max_length=50, blank=True, null=True, verbose_name="Color")
     size = models.CharField(max_length=20, choices=SIZE_CHOICES, default='M', verbose_name="Size")
     quantity = models.IntegerField(default=1, verbose_name="Quantity")
-    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Amount (₹)")
+    
+    # ✅ ADD THIS FIELD - amount_per_piece
+    amount_per_piece = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Amount per Piece (₹)")
+    
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Total Amount (₹)")
     
     # Stock tracking
     stock_available = models.BooleanField(default=True, verbose_name="Stock Available")
@@ -290,9 +296,14 @@ class RMOrderItem(models.Model):
         db_table = 'rm_order_items'
         ordering = ['-created_at']
     
-    def __str__(self):
-        return f"{self.uniform_item} ({self.size}) x{self.quantity} - ₹{self.amount}"
+    def save(self, *args, **kwargs):
+        """Auto-calculate total amount from quantity and amount_per_piece"""
+        if self.amount_per_piece and self.quantity:
+            self.amount = self.amount_per_piece * self.quantity
+        super().save(*args, **kwargs)
     
+    def __str__(self):
+        return f"{self.uniform_item} ({self.size}) x{self.quantity} - ₹{self.amount_per_piece}/pc"
 
 # models.py - Add this after RMOrder model
 
@@ -491,10 +502,12 @@ class MSOrder(models.Model):
 
 # models.py - Add this after MSOrder model
 
+# models.py - Replace MSOrderItem with this
+# models.py - MSOrderItem (Final Version)
+
 class MSOrderItem(models.Model):
     """
-    MS Order Item Model - Individual items in an MS order
-    Each order can have multiple items (e.g., Shirt, Pant, etc.)
+    MS Order Item Model - Each item represents a PERSON
     """
     
     GENDER_CHOICES = [
@@ -502,63 +515,48 @@ class MSOrderItem(models.Model):
         ('Gents', '👨 Gents'),
     ]
     
-    PRODUCT_TYPE_CHOICES = [
-        ('Shirt', 'Shirt'),
-        ('Pant', 'Pant'),
-        ('Kurta', 'Kurta'),
-        ('Saree', 'Saree'),
-        ('Blouse', 'Blouse'),
-        ('Lehenga', 'Lehenga'),
-        ('Jacket', 'Jacket'),
-        ('Coat', 'Coat'),
-        ('Trouser', 'Trouser'),
-        ('Other', 'Other'),
-    ]
-    
     # Relationships
     order = models.ForeignKey(MSOrder, on_delete=models.CASCADE, related_name='items')
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True)
     
-    # Item Details
-    product_type = models.CharField(max_length=50, choices=PRODUCT_TYPE_CHOICES, default='Shirt')
+    # Person Details (NO product_type)
+    person_name = models.CharField(max_length=100, blank=True, null=True, verbose_name="Person Name")
     gender = models.CharField(max_length=10, choices=GENDER_CHOICES, default='Gents')
     quantity = models.IntegerField(default=1)
     amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     
-    # ============= COMMON MEASUREMENTS =============
+    # Upper Body Measurements
     chest = models.FloatField(null=True, blank=True)
-    waist = models.FloatField(null=True, blank=True)
-    hip = models.FloatField(null=True, blank=True)
     shoulder = models.FloatField(null=True, blank=True)
-    length = models.FloatField(null=True, blank=True)
     sleeve_length = models.FloatField(null=True, blank=True)
     armhole = models.FloatField(null=True, blank=True)
     neck = models.FloatField(null=True, blank=True)
-    
-    # ============= GENTS ONLY =============
+    length = models.FloatField(null=True, blank=True)
     collar = models.FloatField(null=True, blank=True)
     bicep = models.FloatField(null=True, blank=True)
     elbow = models.FloatField(null=True, blank=True)
     cuff = models.FloatField(null=True, blank=True)
-    thigh = models.FloatField(null=True, blank=True)
-    knee = models.FloatField(null=True, blank=True)
-    bottom = models.FloatField(null=True, blank=True)
-    rise = models.FloatField(null=True, blank=True)
-    inseam = models.FloatField(null=True, blank=True)
-    
-    # ============= LADIES ONLY =============
     bust = models.FloatField(null=True, blank=True)
     under_bust = models.FloatField(null=True, blank=True)
-    waist_hip = models.FloatField(null=True, blank=True)
-    shoulder_to_waist = models.FloatField(null=True, blank=True)
-    waist_to_knee = models.FloatField(null=True, blank=True)
-    waist_to_floor = models.FloatField(null=True, blank=True)
     arm_length = models.FloatField(null=True, blank=True)
     wrist = models.FloatField(null=True, blank=True)
     front_neck_depth = models.FloatField(null=True, blank=True)
     back_neck_depth = models.FloatField(null=True, blank=True)
     dart_length = models.FloatField(null=True, blank=True)
     dart_depth = models.FloatField(null=True, blank=True)
+    
+    # Lower Body Measurements
+    waist = models.FloatField(null=True, blank=True)
+    hip = models.FloatField(null=True, blank=True)
+    thigh = models.FloatField(null=True, blank=True)
+    knee = models.FloatField(null=True, blank=True)
+    bottom = models.FloatField(null=True, blank=True)
+    rise = models.FloatField(null=True, blank=True)
+    inseam = models.FloatField(null=True, blank=True)
+    waist_hip = models.FloatField(null=True, blank=True)
+    shoulder_to_waist = models.FloatField(null=True, blank=True)
+    waist_to_knee = models.FloatField(null=True, blank=True)
+    waist_to_floor = models.FloatField(null=True, blank=True)
     
     # Additional
     special_notes = models.TextField(blank=True, null=True)
@@ -570,4 +568,4 @@ class MSOrderItem(models.Model):
         ordering = ['-created_at']
     
     def __str__(self):
-        return f"{self.product_type} - {self.gender} (x{self.quantity})"
+        return f"{self.person_name or 'Person'} - {self.gender}"

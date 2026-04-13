@@ -265,8 +265,10 @@ class MSOrderSerializer(serializers.ModelSerializer):
     
 # serializers.py - Add MSOrderItemSerializer
 
+# serializers.py - Update MSOrderItemSerializer
+
 class MSOrderItemSerializer(serializers.ModelSerializer):
-    """Serializer for MS Order Items"""
+    """Serializer for MS Order Items - Each item is a PERSON"""
     
     class Meta:
         model = MSOrderItem
