@@ -249,12 +249,20 @@ class RMOrder(models.Model):
     # models.py - Add this after RMOrder model
 
 # models.py - RMOrderItem model (Find this and update)
+# models.py - Update RMOrderItem model
+
+# models.py - Update RMOrderItem model
 
 class RMOrderItem(models.Model):
     """
     RM Order Item Model - Individual items in an RM order
-    Each order can have multiple items with different sizes and quantities
     """
+    
+    GENDER_CHOICES = [
+        ('Gents', '👨 Gents'),
+        ('Ladies', '👩 Ladies'),
+        ('Kids', '🧒 Kids'),
+    ]
     
     SIZE_CHOICES = [
         ('XS', 'Extra Small'),
@@ -272,16 +280,17 @@ class RMOrderItem(models.Model):
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True)
     
     # Item Details
+    gender = models.CharField(max_length=10, choices=GENDER_CHOICES, default='Gents', verbose_name="Gender")
     product_type = models.CharField(max_length=100, default='Uniform', verbose_name="Product Type")
     uniform_item = models.CharField(max_length=100, default='Shirt', verbose_name="Uniform Item")
     color = models.CharField(max_length=50, blank=True, null=True, verbose_name="Color")
     size = models.CharField(max_length=20, choices=SIZE_CHOICES, default='M', verbose_name="Size")
     quantity = models.IntegerField(default=1, verbose_name="Quantity")
-    
-    # ✅ ADD THIS FIELD - amount_per_piece
     amount_per_piece = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Amount per Piece (₹)")
-    
     amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Total Amount (₹)")
+    
+    # ✅ IMAGE FIELD - Add this
+    reference_image = models.ImageField(upload_to='rm_items/', blank=True, null=True, verbose_name="Reference Image")
     
     # Stock tracking
     stock_available = models.BooleanField(default=True, verbose_name="Stock Available")
@@ -303,8 +312,7 @@ class RMOrderItem(models.Model):
         super().save(*args, **kwargs)
     
     def __str__(self):
-        return f"{self.uniform_item} ({self.size}) x{self.quantity} - ₹{self.amount_per_piece}/pc"
-
+        return f"{self.gender} - {self.uniform_item} ({self.size}) x{self.quantity} - ₹{self.amount_per_piece}/pc"
 # models.py - Add this after RMOrder model
 
 class MSOrder(models.Model):

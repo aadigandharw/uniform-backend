@@ -11,6 +11,8 @@ from .models import User, Customer, MSOrder, MSOrderItem, RMOrder, RMOrderItem
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.shortcuts import get_object_or_404
 from django.db.models import Q, Sum
+import json
+import re
 
 
 # ============= AUTH VIEWS =============
@@ -241,26 +243,21 @@ class CustomerOrdersView(APIView):
 # ============= HELPER FUNCTION =============
 
 def update_customer_stats_safe(customer):
-    """✅ Safely update customer stats — never crash"""
     if not customer:
         return
     try:
         customer.rm_orders_count = RMOrder.objects.filter(
             customer=customer, is_active=True
         ).count()
-
         customer.ms_orders_count = MSOrder.objects.filter(
             customer=customer, is_active=True
         ).count()
-
         rm_total = RMOrder.objects.filter(
             customer=customer, is_active=True
         ).aggregate(total=Sum('amount'))['total'] or 0
-
         ms_total = MSOrder.objects.filter(
             customer=customer, is_active=True
         ).aggregate(total=Sum('amount'))['total'] or 0
-
         customer.total_value = rm_total + ms_total
         customer.save(update_fields=[
             'rm_orders_count', 'ms_orders_count', 'total_value'
@@ -290,18 +287,66 @@ class RMOrderListView(APIView):
         return Response(serializer.data)
 
     def post(self, request):
-        data = request.data
-        items_data = data.pop('items', [])
+        items_data = []
+        
+        # ✅ Handle FormData without using .copy()
+        if request.content_type and 'multipart' in request.content_type:
+            # Get order fields from POST
+            customer_id = request.POST.get('customer_id')
+            category = request.POST.get('category')
+            order_date = request.POST.get('order_date')
+            delivery_date = request.POST.get('delivery_date')
+            ordered_by = request.POST.get('ordered_by')
+            status_val = request.POST.get('status', 'pending')
+            
+            # Get items JSON string
+            items_str = request.POST.get('items', '[]')
+            try:
+                items_data = json.loads(items_str)
+            except json.JSONDecodeError:
+                items_data = []
+            
+            # Handle file uploads
+            for key, file_obj in request.FILES.items():
+                match = re.search(r'items\[(\d+)\]\.reference_image', key)
+                if match:
+                    idx = int(match.group(1))
+                    if idx < len(items_data):
+                        items_data[idx]['reference_image'] = file_obj
+        else:
+            # JSON request
+            customer_id = request.data.get('customer_id')
+            category = request.data.get('category')
+            order_date = request.data.get('order_date')
+            delivery_date = request.data.get('delivery_date')
+            ordered_by = request.data.get('ordered_by')
+            status_val = request.data.get('status', 'pending')
+            items_data = request.data.get('items', [])
+
+        # Calculate totals
+        total_amount = 0
+        total_quantity = 0
+        
+        for item_data in items_data:
+            try:
+                if isinstance(item_data, str):
+                    item_data = json.loads(item_data)
+                qty = int(item_data.get('quantity', 1))
+                amt_per_piece = float(item_data.get('amount_per_piece', 0))
+                total_quantity += qty
+                total_amount += qty * amt_per_piece
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
 
         order_data = {
-            'customer_id': data.get('customer_id'),
-            'category': data.get('category'),
-            'order_date': data.get('order_date'),
-            'delivery_date': data.get('delivery_date'),
-            'ordered_by': data.get('ordered_by'),
-            'amount': sum(float(item.get('amount', 0)) for item in items_data),
-            'quantity': sum(int(item.get('quantity', 0)) for item in items_data),
-            'status': data.get('status', 'pending')
+            'customer_id': customer_id,
+            'category': category,
+            'order_date': order_date,
+            'delivery_date': delivery_date,
+            'ordered_by': ordered_by,
+            'amount': total_amount,
+            'quantity': total_quantity,
+            'status': status_val
         }
 
         order_serializer = RMOrderSerializer(data=order_data)
@@ -309,20 +354,39 @@ class RMOrderListView(APIView):
             order = order_serializer.save(created_by=request.user)
 
             for item_data in items_data:
-                quantity = item_data.get('quantity', 1)
-                amount_per_piece = item_data.get('amount_per_piece', 0)
-                RMOrderItem.objects.create(
-                    order=order,
-                    customer_id=order.customer.id,
-                    uniform_item=item_data.get('uniform_item', 'Shirt'),
-                    color=item_data.get('color', 'White'),
-                    size=item_data.get('size', 'M'),
-                    quantity=quantity,
-                    amount_per_piece=amount_per_piece,
-                    amount=item_data.get('amount', quantity * float(amount_per_piece)),
-                    special_notes=item_data.get('special_notes', '')
-                )
+                try:
+                    if isinstance(item_data, str):
+                        item_data = json.loads(item_data)
+                    
+                    quantity = int(item_data.get('quantity', 1))
+                    amount_per_piece = float(item_data.get('amount_per_piece', 0))
+                    amount = quantity * amount_per_piece
+                    
+                    reference_image = None
+                    if 'reference_image' in item_data and item_data['reference_image']:
+                        if hasattr(item_data['reference_image'], 'name'):
+                            reference_image = item_data['reference_image']
+                        elif isinstance(item_data['reference_image'], str):
+                            reference_image = item_data['reference_image']
+                    
+                    RMOrderItem.objects.create(
+                        order=order,
+                        customer_id=order.customer.id,
+                        gender=item_data.get('gender', 'Gents'),
+                        uniform_item=item_data.get('uniform_item', 'Shirt'),
+                        color=item_data.get('color', 'White'),
+                        size=item_data.get('size', 'M'),
+                        quantity=quantity,
+                        amount_per_piece=amount_per_piece,
+                        amount=amount,
+                        special_notes=item_data.get('special_notes', ''),
+                        reference_image=reference_image
+                    )
+                except Exception as e:
+                    print(f"Error creating item: {e}")
+                    continue
 
+            update_customer_stats_safe(order.customer)
             response_serializer = RMOrderWithItemsSerializer(order)
             return Response(response_serializer.data, status=status.HTTP_201_CREATED)
         return Response(order_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -338,43 +402,130 @@ class RMOrderDetailView(APIView):
 
     def put(self, request, pk):
         order = get_object_or_404(RMOrder, pk=pk)
-        data = request.data
-        items_data = data.pop('items', [])
+        items_data = []
+        
+        # ✅ Handle FormData without using .copy()
+        if request.content_type and 'multipart' in request.content_type:
+            # Get order fields from POST
+            customer_id = request.POST.get('customer_id')
+            category = request.POST.get('category')
+            order_date = request.POST.get('order_date')
+            delivery_date = request.POST.get('delivery_date')
+            ordered_by = request.POST.get('ordered_by')
+            status_val = request.POST.get('status')
+            
+            # Get items JSON string
+            items_str = request.POST.get('items', '[]')
+            try:
+                items_data = json.loads(items_str)
+            except json.JSONDecodeError:
+                items_data = []
+            
+            # Handle file uploads
+            for key, file_obj in request.FILES.items():
+                match = re.search(r'items\[(\d+)\]\.reference_image', key)
+                if match:
+                    idx = int(match.group(1))
+                    if idx < len(items_data):
+                        items_data[idx]['reference_image'] = file_obj
+        else:
+            # JSON request
+            customer_id = request.data.get('customer_id')
+            category = request.data.get('cat', request.data.get('category'))
+            order_date = request.data.get('orderDate', request.data.get('order_date'))
+            delivery_date = request.data.get('deliveryDate', request.data.get('delivery_date'))
+            ordered_by = request.data.get('orderBy', request.data.get('ordered_by'))
+            status_val = request.data.get('status')
+            items_data = request.data.get('items', [])
+
+        # Use existing values if not provided
+        if customer_id is None:
+            customer_id = order.customer.id
+        if category is None:
+            category = order.category
+        if order_date is None:
+            order_date = str(order.order_date)
+        if ordered_by is None:
+            ordered_by = order.ordered_by
+        if status_val is None:
+            status_val = order.status
+
+        try:
+            customer_id = int(customer_id)
+        except (TypeError, ValueError):
+            customer_id = order.customer.id
+
+        # Calculate totals
+        total_amount = 0
+        total_quantity = 0
+        
+        for item_data in items_data:
+            try:
+                if isinstance(item_data, str):
+                    item_data = json.loads(item_data)
+                qty = int(item_data.get('quantity', 1))
+                amt_per_piece = float(item_data.get('amount_per_piece', 0))
+                total_quantity += qty
+                total_amount += qty * amt_per_piece
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
 
         serializer_data = {
-            'customer_id': data.get('customer_id', order.customer.id),
-            'category': data.get('cat', data.get('category', order.category)),
-            'order_date': data.get('orderDate', data.get('order_date', str(order.order_date))),
-            'delivery_date': data.get('deliveryDate', data.get('delivery_date', str(order.delivery_date) if order.delivery_date else None)),
-            'ordered_by': data.get('orderBy', data.get('ordered_by', order.ordered_by)),
-            'amount': data.get('amt', data.get('amount', float(order.amount))),
-            'quantity': data.get('qty', data.get('quantity', order.quantity)),
-            'status': data.get('status', order.status)
+            'customer_id': customer_id,
+            'category': category,
+            'order_date': order_date,
+            'delivery_date': delivery_date,
+            'ordered_by': ordered_by,
+            'amount': total_amount,
+            'quantity': total_quantity,
+            'status': status_val
         }
 
         serializer = RMOrderSerializer(order, data=serializer_data)
         if serializer.is_valid():
             updated_order = serializer.save()
-
-            if items_data and len(items_data) > 0:
-                RMOrderItem.objects.filter(order=order).delete()
-                for item_data in items_data:
-                    quantity = item_data.get('quantity', 1)
-                    amount_per_piece = item_data.get('amount_per_piece', 0)
+            
+            # Delete old items
+            RMOrderItem.objects.filter(order=order).delete()
+            
+            # Create new items
+            for item_data in items_data:
+                try:
+                    if isinstance(item_data, str):
+                        item_data = json.loads(item_data)
+                    
+                    quantity = int(item_data.get('quantity', 1))
+                    amount_per_piece = float(item_data.get('amount_per_piece', 0))
+                    amount = quantity * amount_per_piece
+                    
+                    reference_image = None
+                    if 'reference_image' in item_data and item_data['reference_image']:
+                        if hasattr(item_data['reference_image'], 'name'):
+                            reference_image = item_data['reference_image']
+                        elif isinstance(item_data['reference_image'], str):
+                            reference_image = item_data['reference_image']
+                    
                     RMOrderItem.objects.create(
                         order=order,
                         customer_id=order.customer.id,
+                        gender=item_data.get('gender', 'Gents'),
                         uniform_item=item_data.get('uniform_item', 'Shirt'),
                         color=item_data.get('color', 'White'),
                         size=item_data.get('size', 'M'),
                         quantity=quantity,
                         amount_per_piece=amount_per_piece,
-                        amount=item_data.get('amount', quantity * float(amount_per_piece)),
-                        special_notes=item_data.get('special_notes', '')
+                        amount=amount,
+                        special_notes=item_data.get('special_notes', ''),
+                        reference_image=reference_image
                     )
+                except Exception as e:
+                    print(f"Error creating item: {e}")
+                    continue
 
+            update_customer_stats_safe(order.customer)
             response_serializer = RMOrderWithItemsSerializer(updated_order)
             return Response(response_serializer.data)
+        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def patch(self, request, pk):
@@ -406,16 +557,12 @@ class RMOrderDetailView(APIView):
             return Response(response_serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    # ✅ FIXED — RM Order Delete
     def delete(self, request, pk):
         order = get_object_or_404(RMOrder, pk=pk)
         customer = order.customer
-
         order.is_active = False
         order.save(update_fields=['is_active'])
-
         update_customer_stats_safe(customer)
-
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -616,16 +763,12 @@ class MSOrderDetailView(APIView):
             return Response(response_serializer.data)
         return Response(serializer.errors, status=400)
 
-    # ✅ FIXED — MS Order Delete
     def delete(self, request, pk):
         order = get_object_or_404(MSOrder, pk=pk)
         customer = order.customer
-
         order.is_active = False
         order.save(update_fields=['is_active'])
-
         update_customer_stats_safe(customer)
-
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
