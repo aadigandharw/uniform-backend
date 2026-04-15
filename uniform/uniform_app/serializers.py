@@ -286,13 +286,23 @@ class MSOrderWithItemsSerializer(serializers.ModelSerializer):
 
 # serializers.py - Add after MSOrderItemSerializer
 
+# serializers.py - Update RMOrderItemSerializer
+
 class RMOrderItemSerializer(serializers.ModelSerializer):
     """Serializer for RM Order Items"""
+    
+    # ✅ Add image URL field
+    reference_image_url = serializers.SerializerMethodField()
     
     class Meta:
         model = RMOrderItem
         fields = '__all__'
         read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_reference_image_url(self, obj):
+        if obj.reference_image:
+            return obj.reference_image.url
+        return None
 
 
 class RMOrderWithItemsSerializer(serializers.ModelSerializer):
