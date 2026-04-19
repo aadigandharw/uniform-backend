@@ -577,3 +577,755 @@ class MSOrderItem(models.Model):
     
     def __str__(self):
         return f"{self.person_name or 'Person'} - {self.gender}"
+
+
+
+# models.py - Add these models for Quotation Management
+
+class Quotation(models.Model):
+    """
+    Quotation Model - Main quotation table
+    """
+    
+    # Status Choices
+    STATUS_CHOICES = [
+        ('Draft', '📄 Draft'),
+        ('Sent', '📨 Sent'),
+        ('Approved', '✅ Approved'),
+        ('Rejected', '❌ Rejected'),
+        ('Converted', '🔄 Converted'),
+    ]
+    
+    # Basic Information
+    quotation_no = models.CharField(max_length=50, unique=True, editable=False, verbose_name="Quotation Number")
+    date = models.DateField(auto_now_add=True, verbose_name="Quotation Date")
+    valid_till = models.DateField(null=True, blank=True, verbose_name="Valid Till")
+    
+    # Customer Information (Foreign Key to Customer model)
+    customer = models.ForeignKey(
+        Customer, 
+        on_delete=models.CASCADE, 
+        related_name='quotations',
+        verbose_name="Customer"
+    )
+    
+    # Store customer details at time of quotation (for historical record)
+    customer_name = models.CharField(max_length=255, verbose_name="Customer Name")
+    customer_phone = models.CharField(max_length=20, verbose_name="Phone Number")
+    customer_email = models.EmailField(max_length=255, blank=True, null=True, verbose_name="Email")
+    customer_address = models.TextField(blank=True, null=True, verbose_name="Address")
+    
+    # Quotation Details
+    subject = models.CharField(max_length=500, default="Quotation for Uniform Supply", verbose_name="Subject")
+    message = models.TextField(blank=True, null=True, verbose_name="Message/Body")
+    
+    # Financial Information
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Subtotal (₹)")
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0, verbose_name="Discount %")
+    discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Discount Amount (₹)")
+    gst_percent = models.DecimalField(max_digits=5, decimal_places=2, default=18, verbose_name="GST %")
+    gst_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="GST Amount (₹)")
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Total Amount (₹)")
+    
+    # Status
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Draft', verbose_name="Status")
+    
+    # Terms & Conditions
+    payment_terms = models.TextField(default="50% advance, 50% before dispatch", verbose_name="Payment Terms")
+    delivery_time = models.CharField(max_length=255, default="15-20 working days", verbose_name="Delivery Time")
+    warranty = models.CharField(max_length=255, default="6 months against manufacturing defects", verbose_name="Warranty")
+    validity = models.CharField(max_length=100, default="30 days", verbose_name="Validity")
+    notes = models.TextField(blank=True, null=True, verbose_name="Additional Notes")
+    
+    # Metadata
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_quotations')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    is_active = models.BooleanField(default=True, verbose_name="Is Active")
+    
+    class Meta:
+        db_table = 'quotations'
+        ordering = ['-created_at']
+        verbose_name = 'Quotation'
+        verbose_name_plural = 'Quotations'
+    
+    def __str__(self):
+        return f"{self.quotation_no} - {self.customer_name} - {self.status}"
+    
+    def save(self, *args, **kwargs):
+        """Auto-generate quotation number"""
+        if not self.quotation_no:
+            from django.utils import timezone
+            today = timezone.now().strftime('%Y%m%d')
+            last_quotation = Quotation.objects.filter(
+                quotation_no__startswith=f'QT-{today}'
+            ).order_by('-quotation_no').first()
+            
+            if last_quotation:
+                last_num = int(last_quotation.quotation_no.split('-')[-1])
+                new_num = last_num + 1
+            else:
+                new_num = 1
+            
+            self.quotation_no = f'QT-{today}-{new_num:04d}'
+        
+        super().save(*args, **kwargs)
+    
+    @property
+    def formatted_total(self):
+        """Return formatted total amount"""
+        if self.total_amount >= 100000:
+            return f"₹{self.total_amount/100000:.1f}L"
+        elif self.total_amount >= 1000:
+            return f"₹{self.total_amount/1000:.0f}K"
+        return f"₹{self.total_amount}"
+
+# Quotation Table
+# Quotation Table
+class QuotationItem(models.Model):
+    """
+    Quotation Item Model - Individual items in a quotation
+    """
+    
+    GENDER_CHOICES = [
+        ('Gents', '👨 Gents'),
+        ('Ladies', '👩 Ladies'),
+        ('Kids', '🧒 Kids'),
+    ]
+    
+    SIZE_CHOICES = [
+        ('XS', 'XS'), ('S', 'S'), ('M', 'M'), ('L', 'L'),
+        ('XL', 'XL'), ('XXL', 'XXL'), ('XXXL', 'XXXL'), ('Custom', 'Custom'),
+    ]
+    
+    # Relationships
+    quotation = models.ForeignKey(Quotation, on_delete=models.CASCADE, related_name='items')
+    
+    # Item Details
+    product_name = models.CharField(max_length=255, verbose_name="Product Name")
+    gender = models.CharField(max_length=10, choices=GENDER_CHOICES, default='Gents', verbose_name="Gender")
+    size = models.CharField(max_length=20, choices=SIZE_CHOICES, default='M', verbose_name="Size")
+    quantity = models.IntegerField(default=1, verbose_name="Quantity")
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Unit Price (₹)")
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0, verbose_name="Discount %")
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Amount (₹)")
+    
+    # Additional
+    notes = models.CharField(max_length=255, blank=True, null=True, verbose_name="Item Notes")
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        db_table = 'quotation_items'
+        ordering = ['id']
+    
+    def save(self, *args, **kwargs):
+        """Auto-calculate amount from quantity, unit_price, and discount"""
+        if self.quantity and self.unit_price:
+            from decimal import Decimal
+            
+            # ✅ Convert to Decimal properly
+            qty = Decimal(str(self.quantity))
+            price = Decimal(str(self.unit_price))
+            discount_percent = Decimal(str(self.discount_percent))
+            
+            subtotal = qty * price
+            discount = subtotal * (discount_percent / Decimal('100'))
+            self.amount = subtotal - discount
+        
+        super().save(*args, **kwargs)
+    
+    def __str__(self):
+        return f"{self.product_name} - {self.quantity} x {self.unit_price}"
+
+
+# ============= VENDOR MANAGEMENT MODELS =============
+
+class VendorCategory(models.Model):
+    """Vendor Category - Fabric, Accessories, Thread, etc."""
+    name = models.CharField(max_length=100, unique=True)
+    description = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        db_table = 'vendor_categories'
+        verbose_name = 'Vendor Category'
+        verbose_name_plural = 'Vendor Categories'
+    
+    def __str__(self):
+        return self.name
+
+
+class Vendor(models.Model):
+    """Vendor Model for managing suppliers"""
+    
+    VENDOR_TYPE_CHOICES = [
+        ('fabric', '🧵 Fabric Supplier'),
+        ('accessories', '🔘 Accessories Supplier'),
+        ('thread', '🪡 Thread Supplier'),
+        ('packaging', '📦 Packaging Supplier'),
+        ('machinery', '⚙️ Machinery Supplier'),
+        ('other', '📌 Other'),
+    ]
+    
+    # Basic Information
+    vendor_code = models.CharField(max_length=50, unique=True, editable=False)
+    name = models.CharField(max_length=255)
+    category = models.ForeignKey(VendorCategory, on_delete=models.SET_NULL, null=True, related_name='vendors')
+    vendor_type = models.CharField(max_length=20, choices=VENDOR_TYPE_CHOICES, default='other')
+    
+    # Contact Details
+    contact_person = models.CharField(max_length=255, blank=True, null=True)
+    phone = models.CharField(max_length=20)
+    alternate_phone = models.CharField(max_length=20, blank=True, null=True)
+    email = models.EmailField(max_length=255, blank=True, null=True)
+    website = models.URLField(blank=True, null=True)
+    
+    # Address
+    address_line1 = models.TextField()
+    address_line2 = models.TextField(blank=True, null=True)
+    city = models.CharField(max_length=100)
+    state = models.CharField(max_length=100)
+    pincode = models.CharField(max_length=10)
+    country = models.CharField(max_length=100, default='India')
+    
+    # Business Details
+    gst_number = models.CharField(max_length=50, blank=True, null=True)
+    pan_number = models.CharField(max_length=50, blank=True, null=True)
+    bank_name = models.CharField(max_length=255, blank=True, null=True)
+    account_number = models.CharField(max_length=50, blank=True, null=True)
+    ifsc_code = models.CharField(max_length=20, blank=True, null=True)
+    
+    # Payment Terms
+    payment_terms = models.CharField(max_length=255, default='30 days')
+    credit_limit = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    
+    # Statistics
+    total_purchases = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_orders = models.IntegerField(default=0)
+    last_purchase_date = models.DateField(null=True, blank=True)
+    
+    # Status
+    is_active = models.BooleanField(default=True)
+    rating = models.IntegerField(default=3, choices=[(1, '⭐'), (2, '⭐⭐'), (3, '⭐⭐⭐'), (4, '⭐⭐⭐⭐'), (5, '⭐⭐⭐⭐⭐')])
+    
+    # Metadata
+    notes = models.TextField(blank=True, null=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_vendors')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'vendors'
+        ordering = ['-created_at']
+        verbose_name = 'Vendor'
+        verbose_name_plural = 'Vendors'
+    
+    def __str__(self):
+        return f"{self.name} - {self.phone}"
+    
+    def save(self, *args, **kwargs):
+        if not self.vendor_code:
+            from django.utils import timezone
+            today = timezone.now().strftime('%Y%m%d')
+            last_vendor = Vendor.objects.filter(
+                vendor_code__startswith=f'VEN-{today}'
+            ).order_by('-vendor_code').first()
+            
+            if last_vendor:
+                last_num = int(last_vendor.vendor_code.split('-')[-1])
+                new_num = last_num + 1
+            else:
+                new_num = 1
+            
+            self.vendor_code = f'VEN-{today}-{new_num:04d}'
+        
+        super().save(*args, **kwargs)
+    
+    @property
+    def full_address(self):
+        address = self.address_line1
+        if self.address_line2:
+            address += f", {self.address_line2}"
+        address += f", {self.city}, {self.state} - {self.pincode}"
+        return address
+
+
+class PurchaseOrder(models.Model):
+    """Purchase Order Model"""
+    
+    STATUS_CHOICES = [
+        ('draft', '📄 Draft'),
+        ('ordered', '📨 Ordered'),
+        ('partial', '📦 Partially Received'),
+        ('received', '✅ Fully Received'),
+        ('cancelled', '❌ Cancelled'),
+    ]
+    
+    po_number = models.CharField(max_length=50, unique=True, editable=False)
+    vendor = models.ForeignKey(Vendor, on_delete=models.CASCADE, related_name='purchase_orders')
+    order_date = models.DateField(auto_now_add=True)
+    expected_delivery_date = models.DateField(null=True, blank=True)
+    actual_delivery_date = models.DateField(null=True, blank=True)
+    
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    
+    notes = models.TextField(blank=True, null=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_pos')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'purchase_orders'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.po_number} - {self.vendor.name}"
+    
+    def save(self, *args, **kwargs):
+        if not self.po_number:
+            from django.utils import timezone
+            today = timezone.now().strftime('%Y%m%d')
+            last_po = PurchaseOrder.objects.filter(
+                po_number__startswith=f'PO-{today}'
+            ).order_by('-po_number').first()
+            
+            if last_po:
+                last_num = int(last_po.po_number.split('-')[-1])
+                new_num = last_num + 1
+            else:
+                new_num = 1
+            
+            self.po_number = f'PO-{today}-{new_num:04d}'
+        
+        super().save(*args, **kwargs)
+
+
+class PurchaseOrderItem(models.Model):
+    purchase_order = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name='items')
+    product_name = models.CharField(max_length=255)
+    quantity = models.IntegerField(default=1)
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    received_quantity = models.IntegerField(default=0)
+    notes = models.CharField(max_length=255, blank=True, null=True)
+    
+    class Meta:
+        db_table = 'purchase_order_items'
+    
+    def save(self, *args, **kwargs):
+        from decimal import Decimal
+        # ✅ Convert to Decimal properly
+        qty = Decimal(str(self.quantity))
+        price = Decimal(str(self.unit_price))
+        self.total_price = qty * price
+        super().save(*args, **kwargs)
+
+
+# ============= PRODUCT CATALOG MODELS =============
+
+class ProductCategory(models.Model):
+    """Product categories like Shirt, Pant, Blazer, etc."""
+    name = models.CharField(max_length=100, unique=True)
+    description = models.TextField(blank=True, null=True)
+    icon = models.CharField(max_length=50, blank=True, null=True)  # For UI
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'product_categories'
+        ordering = ['name']
+        verbose_name = 'Product Category'
+        verbose_name_plural = 'Product Categories'
+    
+    def __str__(self):
+        return self.name
+
+
+class Product(models.Model):
+    """Main Product Model"""
+    
+    GENDER_CHOICES = [
+        ('Gents', '👨 Gents'),
+        ('Ladies', '👩 Ladies'),
+        ('Kids', '🧒 Kids'),
+        ('Unisex', '👥 Unisex'),
+    ]
+    
+    # Basic Information
+    product_code = models.CharField(max_length=50, unique=True, editable=False)
+    name = models.CharField(max_length=255)
+    category = models.ForeignKey(ProductCategory, on_delete=models.CASCADE, related_name='products')
+    gender = models.CharField(max_length=10, choices=GENDER_CHOICES, default='Unisex')
+    description = models.TextField(blank=True, null=True)
+    
+    # Images
+    main_image = models.ImageField(upload_to='products/', blank=True, null=True)
+    additional_images = models.JSONField(default=list, blank=True)  # List of image URLs
+    
+    # Pricing
+    base_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    
+    # Status
+    is_active = models.BooleanField(default=True)
+    is_in_stock = models.BooleanField(default=True)
+    
+    # Metadata
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_products')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'products'
+        ordering = ['-created_at']
+        verbose_name = 'Product'
+        verbose_name_plural = 'Products'
+    
+    def __str__(self):
+        return f"{self.product_code} - {self.name}"
+    
+    def save(self, *args, **kwargs):
+        if not self.product_code:
+            from django.utils import timezone
+            import random
+            # Generate unique product code: PRD-YYYYMMDD-XXXX
+            today = timezone.now().strftime('%Y%m%d')
+            last_product = Product.objects.filter(
+                product_code__startswith=f'PRD-{today}'
+            ).order_by('-product_code').first()
+            
+            if last_product:
+                last_num = int(last_product.product_code.split('-')[-1])
+                new_num = last_num + 1
+            else:
+                new_num = 1
+            
+            self.product_code = f'PRD-{today}-{new_num:04d}'
+        
+        super().save(*args, **kwargs)
+    
+    @property
+    def formatted_price(self):
+        return f"₹{self.base_price:,.2f}"
+
+
+class ProductVariant(models.Model):
+    """Product variants like Size, Color, Fabric"""
+    
+    SIZE_CHOICES = [
+        ('XS', 'XS'), ('S', 'S'), ('M', 'M'), ('L', 'L'),
+        ('XL', 'XL'), ('XXL', 'XXL'), ('XXXL', 'XXXL'), ('Custom', 'Custom'),
+    ]
+    
+    COLOR_CHOICES = [
+        ('White', '⚪ White'), ('Black', '⚫ Black'), ('Blue', '🔵 Blue'),
+        ('Red', '🔴 Red'), ('Green', '🟢 Green'), ('Yellow', '🟡 Yellow'),
+        ('Maroon', '🔴 Maroon'), ('Grey', '⬜ Grey'), ('Navy', '🔵 Navy'),
+        ('Other', '🎨 Other'),
+    ]
+    
+    FABRIC_CHOICES = [
+        ('Cotton', 'Cotton'), ('Polyester', 'Polyester'), ('Linen', 'Linen'),
+        ('Silk', 'Silk'), ('Wool', 'Wool'), ('Velvet', 'Velvet'),
+        ('Denim', 'Denim'), ('Other', 'Other'),
+    ]
+    
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='variants')
+    size = models.CharField(max_length=10, choices=SIZE_CHOICES, default='M')
+    color = models.CharField(max_length=20, choices=COLOR_CHOICES, default='White')
+    fabric = models.CharField(max_length=20, choices=FABRIC_CHOICES, default='Cotton')
+    
+    # Pricing (can override base price)
+    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    
+    # Stock
+    stock_quantity = models.IntegerField(default=0)
+    reorder_level = models.IntegerField(default=10)
+    
+    # Additional
+    sku = models.CharField(max_length=100, blank=True, null=True)  # Unique SKU for variant
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        db_table = 'product_variants'
+        unique_together = ['product', 'size', 'color', 'fabric']
+    
+    def __str__(self):
+        return f"{self.product.name} - {self.size}/{self.color}/{self.fabric}"
+    
+    @property
+    def effective_price(self):
+        return self.price if self.price else self.product.base_price
+
+
+class SchoolProductPrice(models.Model):
+    """School/Client specific pricing for products"""
+    
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='school_prices')
+    school = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='product_prices')
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'school_product_prices'
+        unique_together = ['product', 'school']
+    
+    def __str__(self):
+        return f"{self.product.name} - {self.school.name}: ₹{self.price}"
+
+
+# backend/api/models/task_models.py
+class Employee(models.Model):
+    """Employee Model - Staff members who get tasks assigned"""
+    
+    DESIGNATION_CHOICES = [
+        ('cutter', '✂️ Cutter'),
+        ('stitcher', '🪡 Stitcher'),
+        ('finisher', '✨ Finisher'),
+        ('packer', '📦 Packer'),
+        ('supervisor', '👔 Supervisor'),
+        ('tailor', '👕 Tailor'),
+    ]
+    
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='employee_profile')
+    employee_code = models.CharField(max_length=50, unique=True, editable=False)
+    designation = models.CharField(max_length=20, choices=DESIGNATION_CHOICES)
+    phone = models.CharField(max_length=20, blank=True, null=True)
+    address = models.TextField(blank=True, null=True)
+    joining_date = models.DateField(auto_now_add=True)
+    salary = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    is_active = models.BooleanField(default=True)
+    
+    # Statistics
+    total_tasks = models.IntegerField(default=0)
+    completed_tasks = models.IntegerField(default=0)
+    pending_tasks = models.IntegerField(default=0)
+    in_progress_tasks = models.IntegerField(default=0)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'employees'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.user.full_name} - {self.get_designation_display()}"
+    
+    def save(self, *args, **kwargs):
+        if not self.employee_code:
+            from django.utils import timezone
+            today = timezone.now().strftime('%Y%m%d')
+            last_emp = Employee.objects.filter(
+                employee_code__startswith=f'EMP-{today}'
+            ).order_by('-employee_code').first()
+            
+            if last_emp:
+                last_num = int(last_emp.employee_code.split('-')[-1])
+                new_num = last_num + 1
+            else:
+                new_num = 1
+            
+            self.employee_code = f'EMP-{today}-{new_num:04d}'
+        
+        super().save(*args, **kwargs)
+    
+    @property
+    def completion_rate(self):
+        if self.total_tasks == 0:
+            return 0
+        return round((self.completed_tasks / self.total_tasks) * 100, 1)
+
+
+class Task(models.Model):
+    """Task Model - Tasks created from Orders"""
+    
+    TASK_TYPE_CHOICES = [
+        ('cutting', '✂️ Cutting'),
+        ('stitching', '🪡 Stitching'),
+        ('finishing', '✨ Finishing'),
+        ('packing', '📦 Packing'),
+        ('qc', '✅ Quality Check'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('pending', '⏳ Pending'),
+        ('in_progress', '🔄 In Progress'),
+        ('completed', '✅ Completed'),
+        ('rejected', '❌ Rejected'),
+    ]
+    
+    PRIORITY_CHOICES = [
+        ('low', '🟢 Low'),
+        ('medium', '🟡 Medium'),
+        ('high', '🔴 High'),
+        ('urgent', '⚠️ Urgent'),
+    ]
+    
+    # Order Reference (either RM or MS order)
+    rm_order = models.ForeignKey(RMOrder, on_delete=models.CASCADE, null=True, blank=True, related_name='tasks')
+    ms_order = models.ForeignKey(MSOrder, on_delete=models.CASCADE, null=True, blank=True, related_name='tasks')
+    
+    # Task Details
+    task_number = models.CharField(max_length=50, unique=True, editable=False)
+    task_type = models.CharField(max_length=20, choices=TASK_TYPE_CHOICES)
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    
+    # Assignment
+    assigned_to = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='tasks')
+    assigned_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='assigned_tasks')
+    
+    # Quantity tracking
+    total_quantity = models.IntegerField(default=1)
+    completed_quantity = models.IntegerField(default=0)
+    
+    # Timeline
+    start_date = models.DateField(auto_now_add=True)
+    due_date = models.DateField()
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    # Status & Priority
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default='medium')
+    
+    # Additional
+    remarks = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'tasks'
+        ordering = ['-priority', 'due_date', '-created_at']
+    
+    def __str__(self):
+        order_ref = self.rm_order.order_id if self.rm_order else (self.ms_order.order_id if self.ms_order else 'N/A')
+        return f"{self.task_number} - {self.get_task_type_display()} - {order_ref}"
+    
+    def save(self, *args, **kwargs):
+        if not self.task_number:
+            from django.utils import timezone
+            today = timezone.now().strftime('%Y%m%d')
+            last_task = Task.objects.filter(
+                task_number__startswith=f'TASK-{today}'
+            ).order_by('-task_number').first()
+            
+            if last_task:
+                last_num = int(last_task.task_number.split('-')[-1])
+                new_num = last_num + 1
+            else:
+                new_num = 1
+            
+            self.task_number = f'TASK-{today}-{new_num:04d}'
+        
+        super().save(*args, **kwargs)
+    
+    @property
+    def progress_percent(self):
+        if self.total_quantity == 0:
+            return 0
+        return round((self.completed_quantity / self.total_quantity) * 100, 1)
+    
+    @property
+    def is_overdue(self):
+        from django.utils import timezone
+        return self.due_date < timezone.now().date() and self.status != 'completed'
+    
+    @property
+    def order_reference(self):
+        if self.rm_order:
+            return {
+                'type': 'RM',
+                'order_id': self.rm_order.order_id,
+                'customer': self.rm_order.customer.name
+            }
+        elif self.ms_order:
+            return {
+                'type': 'MS',
+                'order_id': self.ms_order.order_id,
+                'customer': self.ms_order.customer.name
+            }
+        return None
+
+
+class TaskProgress(models.Model):
+    """Task Progress Log - Track progress updates"""
+    
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name='progress_logs')
+    completed_quantity = models.IntegerField()
+    remarks = models.TextField(blank=True, null=True)
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        db_table = 'task_progress_logs'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.task.task_number} - +{self.completed_quantity}"
+
+
+# models.py - Add this after Task model
+
+class Notification(models.Model):
+    """
+    Notification Model for system notifications
+    """
+    
+    NOTIFICATION_TYPES = [
+        ('order_ready', 'Order Ready'),
+        ('order_delivered', 'Order Delivered'),
+        ('order_delayed', 'Order Delayed'),
+        ('task_updated', 'Task Updated'),
+        ('system', 'System Notification'),
+    ]
+    
+    # Basic Info
+    title = models.CharField(max_length=255)
+    message = models.TextField()
+    notification_type = models.CharField(max_length=50, choices=NOTIFICATION_TYPES, default='system')
+    
+    # Related Objects
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications', null=True, blank=True)
+    order_id = models.CharField(max_length=50, null=True, blank=True)
+    order_type = models.CharField(max_length=10, null=True, blank=True)  # RM or MS
+    task_id = models.IntegerField(null=True, blank=True)
+    
+    # Status
+    is_read = models.BooleanField(default=False)
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'notifications'
+        ordering = ['-created_at']
+        verbose_name = 'Notification'
+        verbose_name_plural = 'Notifications'
+    
+    def __str__(self):
+        return f"{self.title} - {self.user.email if self.user else 'System'}"
+    
+    @property
+    def time_ago(self):
+        from django.utils import timezone
+        diff = timezone.now() - self.created_at
+        days = diff.days
+        hours = diff.seconds // 3600
+        minutes = (diff.seconds % 3600) // 60
+        
+        if days > 0:
+            return f"{days} day{'s' if days > 1 else ''} ago"
+        elif hours > 0:
+            return f"{hours} hour{'s' if hours > 1 else ''} ago"
+        elif minutes > 0:
+            return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+        else:
+            return "Just now"
